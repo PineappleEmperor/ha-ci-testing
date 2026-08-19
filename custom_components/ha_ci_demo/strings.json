@@ -1,0 +1,12 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Set up the CI demo integration."
+      }
+    },
+    "abort": {
+      "already_configured": "Already configured."
+    }
+  }
+}

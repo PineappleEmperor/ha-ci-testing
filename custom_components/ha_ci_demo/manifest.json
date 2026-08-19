@@ -1,0 +1,13 @@
+{
+  "domain": "ha_ci_demo",
+  "name": "HA CI Demo",
+  "codeowners": ["@PineappleEmperor"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/PineappleEmperor/ha-ci-testing",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/PineappleEmperor/ha-ci-testing/issues",
+  "requirements": [],
+  "version": "0.0.0"
+}

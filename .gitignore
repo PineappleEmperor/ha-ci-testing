@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+.storage/
+home-assistant.log*
+device_map.md
