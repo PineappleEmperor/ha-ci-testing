@@ -21,11 +21,11 @@ permissions:
 
 jobs:
   draft:
-    name: Open draft PR
+    name: Auto draft PR
     if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -50,15 +50,10 @@ jobs:
             echo "::notice::no commits ahead of $BASE; nothing to open"
             exit 0
           fi
-          WIN=$(python3 scripts/commit_summary.py --mode winning --subjects subjects.txt)
-          # Take the summary from a commit that IS the winning type, oldest first —
-          # pairing the winning type with an unrelated commit's text states something
-          # false, e.g. "feat: <the fix commit's subject>". Falls back to the oldest
-          # commit when no subject carries the winning type verbatim.
-          SUMMARY=$(grep -iE "^${WIN}(\([^)]*\))?!?:" subjects.txt | tail -1 \
-            | sed -E 's/^[a-zA-Z]+(\([^)]*\))?!?: *//')
-          if [ -z "$SUMMARY" ]; then
-            SUMMARY=$(tail -1 subjects.txt | sed -E 's/^[a-zA-Z]+(\([^)]*\))?!?: *//')
-          fi
+          # The title comes from the commits, which the commit-msg hook already
+          # validates. The mapping from changelog category to a labellable type lives
+          # in commit_summary.py, where it is unit-tested — a title built in bash here
+          # produced "maint:", which lint_pr rejects.
+          TITLE=$(python3 scripts/commit_summary.py --mode title --subjects subjects.txt)
           gh pr create --draft --base "$BASE" --head "$BRANCH" \
-            --title "$WIN: $SUMMARY" --body ""
+            --title "$TITLE" --body ""

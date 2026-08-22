@@ -43,7 +43,7 @@ jobs:
     name: Label from title
     runs-on: ubuntu-latest
     steps:
-      - uses: release-drafter/release-drafter/autolabeler@v7
+      - uses: release-drafter/release-drafter/autolabeler@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7.7.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -85,7 +85,7 @@ jobs:
     steps:
       # checkout first: it clears the workspace, so it cannot run after a step
       # that wrote a file there. (skill_audit.sh enforces this.)
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
@@ -179,7 +179,7 @@ jobs:
       # BASE, not the PR head. Under pull_request_target the token is writable, so
       # scripts/manifest_gate.py must be the trusted copy from the base branch — a
       # fork PR that edited it would otherwise run with that token.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
@@ -194,8 +194,24 @@ jobs:
         run: |
           if grep -q 'Set the manifest version from the tag' .github/workflows/release.yml 2>/dev/null; then
             echo "tag_driven=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::version comes from the release tag; nothing to gate"
           fi
+
+      # Advisory in a tag-driven repo: say what this PR's label implies the next
+      # release will be, so the number is visible before anyone publishes a draft.
+      # It cannot block — there is no bump in the PR to be wrong about.
+      - name: Say what version this PR implies
+        if: steps.mode.outputs.tag_driven == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          LABELS=$(gh pr view "$PR" --json labels -q '[.labels[].name]|join(",")')
+          LAST=$(gh release list --exclude-drafts --limit 30 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease == false) | .tagName' | head -1)
+          LAST="${LAST#v}"
+          [ -n "$LAST" ] || LAST="0.0.0"
+          NEXT=$(python3 scripts/manifest_gate.py --suggest --last-release "$LAST" --labels "$LABELS")
+          echo "::notice::labels [$LABELS] imply the next release is ${NEXT} (currently v${LAST})"
 
       - name: Gather versions and labels
         id: gather
@@ -244,81 +260,3 @@ jobs:
             --labels "$LABELS" \
             --breaking-commits "$BRK"
 
-  # -------------------------------------------------------- commit-summary ----
-  # Reads only commits, so it declares no `needs` and runs in parallel. It lives
-  # here because it is PR-body hygiene like the rest, not because it is ordered.
-  commit-summary:
-    name: Commit summary in PR body
-    if: github.event.pull_request.user.type != 'Bot'
-    runs-on: ubuntu-latest
-    steps:
-      # checkout FIRST: actions/checkout clears the workspace, so it must run
-      # before anything writes a file there. Ordering it after the fetch deleted
-      # subjects.txt between writing and reading it.
-      #
-      # The classifier lives in scripts/commit_summary.py, unit-tested in
-      # tests/test_commit_summary.py. It was inline here once; an inline heredoc
-      # cannot be tested, and a wrong classifier corrupts release notes without
-      # ever failing a build. It did: a version-bump filter ending in
-      # `to v?\d+\.\d+` ate every semver dependency bump.
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-
-      - name: Fetch commit subjects
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          gh api --paginate "repos/$GH_REPO/pulls/$PR/commits" \
-            --jq '.[].commit.message | split("\n")[0]' > subjects.txt
-          wc -l < subjects.txt
-
-      - name: Build the grouped summary
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          # Pass the title so bullets that merely restate it are dropped; otherwise
-          # most PRs say the same thing twice in the release notes.
-          python3 scripts/commit_summary.py --subjects subjects.txt --title "$PR_TITLE" > summary.md
-
-      - name: Splice it into the PR body
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          gh pr view "$PR" --json body --jq '.body // ""' > body.md
-          python3 - <<'PY'
-          import pathlib
-
-          START, END = "<!-- commit-summary:start -->", "<!-- commit-summary:end -->"
-          body = pathlib.Path("body.md").read_text()
-          # strip("\n"), NOT strip(): the block's lines carry two leading spaces so
-          # that release-drafter's `$BODY` nests under its `- $TITLE …` bullet. A bare
-          # .strip() removes that indent from the FIRST line only, leaving the opening
-          # sub-head flush left while every later one stays indented.
-          summary = pathlib.Path("summary.md").read_text().strip("\n")
-          # Empty summary => the block would only restate the title. Remove it.
-          block = f"{START}\n{summary}\n{END}" if summary else ""
-
-          # Replace only the managed block so a human-written description survives.
-          if START in body and END in body:
-              head, rest = body.split(START, 1)
-              _, tail = rest.split(END, 1)
-              new = f"{head}{block}{tail}"
-          elif block:
-              new = f"{body.rstrip()}\n\n{block}\n" if body.strip() else f"{block}\n"
-          else:
-              new = body
-
-          if new != body:
-              pathlib.Path("new_body.md").write_text(new)
-          PY
-          if [ -f new_body.md ]; then
-            gh pr edit "$PR" --body-file new_body.md
-          else
-            echo "body already current"
-          fi

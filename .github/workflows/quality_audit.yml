@@ -7,7 +7,11 @@ on:
 
 jobs:
   audit:
+    name: ha-integration conformance check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - run: bash scripts/skill_audit.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/skill_audit.py
+      # The Python version is written in several files, each read by a different
+      # tool. This is the only thing that compares them.
+      - run: python3 scripts/version_sync.py
