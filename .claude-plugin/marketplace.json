@@ -1,0 +1,13 @@
+{
+  "name": "sync-test",
+  "owner": {
+    "name": "PineappleEmperor"
+  },
+  "plugins": [
+    {
+      "name": "ha",
+      "source": "./plugins/ha",
+      "description": "Sync-workflow test fixture."
+    }
+  ]
+}
