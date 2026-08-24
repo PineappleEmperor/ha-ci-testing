@@ -372,14 +372,25 @@ def check_pr_checks_shape(repo: Repo) -> Result:
     for jn in late:
         fails.append(f"pr-checks.yml: actions/checkout must be the FIRST step of job '{jn}' "
                      f"(it clears the workspace)")
-    # untrusted strings must arrive via env, never interpolation
-    interpolated = [(jn, s.get("name"), m)
-                    for jn, steps in _jobs_steps(repo, rel).items() for s in steps
-                    for m in re.findall(r"\$\{\{\s*([^}]+?)\s*\}\}", str(s.get("run", "")))]
-    for jn, name, expr in interpolated:
-        fails.append(f"pr-checks.yml interpolates ${{{{ {expr} }}}} inside a run: block in "
-                     f"'{name or jn}' (use env:)")
     return fails, warns
+
+
+def check_no_run_interpolation(repo: Repo) -> Result:
+    """`${{ }}` inside a `run:` is substituted as text before the shell sees it.
+
+    The skill states this as a rule for every workflow, and the check enforced it in
+    `pr-checks.yml` alone — so `release_drafter.yml` interpolated a version string into a
+    shell command for months while the gate stayed green and the prose claimed mechanical
+    enforcement. A rule enforced in one file is a rule that reads as enforced everywhere.
+    """
+    fails = []
+    for wf in repo.workflow_files():
+        for jn, steps in _jobs_steps(repo, f".github/workflows/{wf.name}").items():
+            for s in steps:
+                for expr in re.findall(r"\$\{\{\s*([^}]+?)\s*\}\}", str(s.get("run", ""))):
+                    fails.append(f"{wf.name} interpolates ${{{{ {expr} }}}} inside a run: block "
+                                 f"in '{s.get('name') or jn}' (pass it through env:)")
+    return fails, []
 
 
 def _jobs_steps(repo: Repo, rel: str) -> dict[str, list[dict]]:
@@ -413,7 +424,7 @@ def check_sole_labeler(repo: Repo) -> Result:
     bad += [f"job '{n}' looks like a second labeler"
             for n in (doc.get("jobs") or {}) if "label" in n.lower()]
     if bad:
-        return ["release_drafter.yml must be push-only with no autolabeler job "
+        return ["release_drafter.yml may trigger only on push, workflow_dispatch or release with no autolabeler job "
                 "(pr-checks.yml is the sole labeler): " + "; ".join(bad)], []
     return [], []
 
@@ -424,11 +435,20 @@ def check_pr_openers(repo: Repo) -> Result:
     if repo.exists(".github/workflows/create-dev-pr.yml"):
         fails.append("create-dev-pr.yml is superseded (use auto_draft_pr.yml, which is "
                      "draft-only and actor-gated)")
+    # The sanctioned openers are the ones a human cannot open for themselves: a bot that
+    # must propose its own change, or the draft opener that exists so a title is never
+    # typed. Anything else opening a PR is a workflow acting as an author. A repo with a
+    # different delivery model declares its own with a marker rather than being named
+    # here — this file ships to every scaffolded integration and should not carry the
+    # filenames of repos it never runs in.
+    SANCTIONED = ("auto_draft_pr.yml",)
     for wf in repo.workflow_files():
-        if "gh pr create" in wf.read_text(errors="replace") and \
-                wf.name not in ("auto_draft_pr.yml", "update_manifest_floors.yml"):
-            fails.append(f"{wf.name} opens PRs with 'gh pr create' (only auto_draft_pr.yml "
-                         f"and update_manifest_floors.yml may)")
+        text = wf.read_text(errors="replace")
+        if "gh pr create" in text and wf.name not in SANCTIONED \
+                and "# skill-audit: sanctioned-opener" not in text:
+            fails.append(f"{wf.name} opens PRs with 'gh pr create' (only "
+                         + ", ".join(SANCTIONED) + " may, or mark it "
+                         "'# skill-audit: sanctioned-opener' with a reason)")
     opener = repo.text(".github/workflows/auto_draft_pr.yml")
     if opener:
         if "github.actor == github.repository_owner" not in opener:
@@ -554,6 +574,15 @@ def check_commit_hook(repo: Repo) -> Result:
     import os
     if not os.access(hook, os.X_OK):
         fails.append(".githooks/commit-msg is not executable (chmod +x)")
+    text = hook.read_text()
+    # A hook that only measures length passes a well-formed subject that says nothing.
+    # Both guards were added after a subject that passed every rule and named nothing:
+    # the shape rule keeps the type mapped for the release notes, the word list
+    # catches a subject that editorialises instead of saying what changed.
+    if "feat|fix|docs" not in text:
+        fails.append(".githooks/commit-msg does not enforce the Conventional Commit subject shape")
+    if "editorialising" not in text:
+        fails.append(".githooks/commit-msg does not reject editorialising subjects")
     try:
         configured = subprocess.run(["git", "config", "core.hooksPath"], cwd=repo.root,
                                     capture_output=True, text=True, check=False).stdout.strip()
@@ -619,6 +648,7 @@ def check_self_diff(repo: Repo) -> Result:
         return ["this repo's .github/ diverges from its own templates/ (see Mode 4 sanctioned "
                 "adaptations): " + ", ".join(bad)], []
     return [], []
+
 
 
 def check_template_pins(repo: Repo) -> Result:
@@ -696,7 +726,8 @@ CHECKS = (
     check_scripts_wired, check_single_body_writer, check_previous_tag,
     check_zip_release_patches_manifest, check_label_events, check_release_drafter_wiring,
     check_classifier_not_inlined, check_claims_have_tests, check_action_pins,
-    check_pr_checks_shape, check_no_ignored_validations, check_sole_labeler,
+    check_pr_checks_shape, check_no_run_interpolation, check_no_ignored_validations,
+    check_sole_labeler,
     check_pr_openers, check_antipatterns, check_quality_scale_and_manifest,
     check_autolabeler_title_only, check_drafter_categories, check_docstrings,
     check_commit_hook, check_brand_assets, check_self_diff, check_template_pins,
@@ -719,7 +750,16 @@ def audit(root: pathlib.Path) -> Result:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".", help="repository to audit")
+    # The skill used to enumerate these rules in prose, which went stale the moment the
+    # pin check moved from version floors to commit SHAs. The registry is the list.
+    ap.add_argument("--list", action="store_true", help="print the checks and exit")
     args = ap.parse_args(argv)
+
+    if args.list:
+        for check in CHECKS:
+            summary = (check.__doc__ or "").strip().splitlines()[0]
+            print(f"{check.__name__[len('check_'):]:28} {summary}")
+        return 0
 
     root = pathlib.Path(args.root)
     repo = Repo(root)
