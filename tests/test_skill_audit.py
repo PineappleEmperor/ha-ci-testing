@@ -8,6 +8,7 @@ for weeks. Each check here is a function, so each gets its own case.
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 
 import pytest
@@ -128,6 +129,35 @@ def test_hook_without_the_subject_guards_fails(tmp_path) -> None:
     assert fails == []
 
 
+def test_shipped_scripts_must_match_the_ones_this_repo_runs(tmp_path) -> None:
+    """The shipped copy is what integrations get, and it drifted from the repo's own.
+
+    Two fixes landed in `scripts/` and never reached `templates/scripts/`, while the docs
+    described the fixed behaviour. Nothing compared them: `check_self_diff` walks workflows
+    only. A silent no-op here would restore exactly that blind spot, so assert both that it
+    catches a difference and that it clears once the copies agree.
+    """
+    tmpl = tmp_path / "plugins/ha/skills/demo/templates"
+    (tmpl / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmpl / "scripts/tool.py").write_text("VALUE = 1\n")
+    (tmp_path / "scripts/tool.py").write_text("VALUE = 2\n")
+
+    fails, _ = audit.check_template_scripts_match(audit.Repo(tmp_path))
+    assert any("scripts/tool.py" in f for f in fails)
+
+    (tmp_path / "scripts/tool.py").write_text("VALUE = 1\n")
+    assert audit.check_template_scripts_match(audit.Repo(tmp_path)) == ([], [])
+
+
+def test_shipped_script_absent_from_this_repo_is_not_drift(tmp_path) -> None:
+    """Not every shipped file is one the skill repo runs; a missing counterpart is fine."""
+    tmpl = tmp_path / "plugins/ha/skills/demo/templates"
+    (tmpl / "scripts").mkdir(parents=True)
+    (tmpl / "scripts/only_shipped.py").write_text("VALUE = 1\n")
+    assert audit.check_template_scripts_match(audit.Repo(tmp_path)) == ([], [])
+
+
 def test_list_mode_names_every_check(capsys) -> None:
     """The skill points readers at --list instead of enumerating rules that go stale."""
     assert audit.main(["--list"]) == 0
@@ -198,3 +228,108 @@ def test_no_dependency_review_workflow_means_nothing_to_check(repo, monkeypatch)
     """A repo that does not ship the workflow has no prerequisite to satisfy."""
     monkeypatch.setattr(audit.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not query")))
     assert audit.check_dependency_graph(audit.Repo(repo)) == ([], [])
+
+
+def test_platforms_naming_a_missing_module_fails(repo) -> None:
+    """The live defect: PLATFORMS = ["sensor"] with no sensor.py, inert until forwarded."""
+    pkg = repo / "custom_components/acmedev"
+    pkg.mkdir(parents=True)
+    (pkg / "manifest.json").write_text('{"domain": "acmedev"}')
+    (pkg / "const.py").write_text('DOMAIN = "acmedev"\nPLATFORMS = ["sensor", "notify"]\n')
+    (pkg / "notify.py").write_text("")
+    fails, _ = audit.check_platforms_have_modules(audit.Repo(repo))
+    assert len(fails) == 1 and "sensor" in fails[0] and "notify" not in fails[0]
+
+
+def test_platform_enum_form_is_understood(repo) -> None:
+    """Both spellings appear in real integrations."""
+    pkg = repo / "custom_components/acmedev"
+    pkg.mkdir(parents=True)
+    (pkg / "manifest.json").write_text('{"domain": "acmedev"}')
+    (pkg / "const.py").write_text("PLATFORMS = [Platform.SENSOR, Platform.NOTIFY]\n")
+    (pkg / "sensor.py").write_text("")
+    fails, _ = audit.check_platforms_have_modules(audit.Repo(repo))
+    assert len(fails) == 1 and "notify" in fails[0]
+
+
+def test_matching_platforms_pass(repo) -> None:
+    pkg = repo / "custom_components/acmedev"
+    pkg.mkdir(parents=True)
+    (pkg / "manifest.json").write_text('{"domain": "acmedev"}')
+    (pkg / "const.py").write_text('PLATFORMS = ["notify"]\n')
+    (pkg / "notify.py").write_text("")
+    assert audit.check_platforms_have_modules(audit.Repo(repo)) == ([], [])
+
+
+def _ruleset(repo, *contexts) -> None:
+    (repo / "ruleset.json").write_text(json.dumps(
+        {"rules": [{"type": "required_status_checks",
+                    "parameters": {"required_status_checks":
+                                   [{"context": c} for c in contexts]}}]}))
+
+
+def test_a_required_context_no_job_produces_fails(repo) -> None:
+    """The observed defect, twice: a ruleset requiring a check nothing reports.
+
+    Checking that workflow FILES exist cannot catch this — the failure is a name in the
+    ruleset with no job on the other end. Every other check goes green and the PR is
+    unmergeable with nothing to point at.
+    """
+    _wf(repo, "pr-checks.yml", "jobs:\n  label:\n    name: CC labelling\n    steps: []\n")
+    _ruleset(repo, "CC labelling", "Version validation")
+    fails, _ = audit.check_required_contexts_have_producers(audit.Repo(repo))
+    assert len(fails) == 1 and "Version validation" in fails[0]
+
+
+def test_every_required_context_produced_passes(repo) -> None:
+    _wf(repo, "pr-checks.yml", "jobs:\n  label:\n    name: CC labelling\n    steps: []\n")
+    _ruleset(repo, "CC labelling")
+    assert audit.check_required_contexts_have_producers(audit.Repo(repo)) == ([], [])
+
+
+def test_a_job_without_a_name_is_known_by_its_id(repo) -> None:
+    """GitHub names the check-run for the job id when the job declares no name."""
+    _wf(repo, "a.yml", "jobs:\n  review:\n    steps: []\n")
+    _ruleset(repo, "review")
+    assert audit.check_required_contexts_have_producers(audit.Repo(repo)) == ([], [])
+
+
+def test_the_shipped_ruleset_is_checked_against_the_shipped_workflows(tmp_path) -> None:
+    """What ships is what scaffolds; an orphan here bricks every repo built from it."""
+    tmpl = tmp_path / "plugins/ha/skills/demo/templates"
+    (tmpl / ".github/workflows").mkdir(parents=True)
+    (tmpl / ".github/workflows/a.yml").write_text("jobs:\n  x:\n    name: Real\n    steps: []\n")
+    (tmpl / "ruleset.json").write_text(json.dumps(
+        {"rules": [{"type": "required_status_checks",
+                    "parameters": {"required_status_checks": [{"context": "Imaginary"}]}}]}))
+    fails, _ = audit.check_required_contexts_have_producers(audit.Repo(tmp_path))
+    assert len(fails) == 1 and "Imaginary" in fails[0]
+
+
+def test_live_required_contexts_warn_when_gh_is_missing(repo, monkeypatch) -> None:
+    """Unverifiable must say NOT CHECKED; a silent pass is how this survived before."""
+    class _Missing:
+        def __call__(self, *a, **k):
+            raise OSError("gh not found")
+    monkeypatch.setattr(audit.subprocess, "run", _Missing())
+    _, warns = audit.check_live_required_contexts(audit.Repo(repo))
+    assert any("NOT CHECKED" in w for w in warns)
+
+
+def test_live_ruleset_orphan_fails(repo, monkeypatch) -> None:
+    """A repo protected from the GitHub UI has no ruleset.json to compare against."""
+    _wf(repo, "pr-checks.yml", "jobs:\n  label:\n    name: CC labelling\n    steps: []\n")
+
+    class _Fake:
+        def __init__(self, out, rc=0): self.stdout, self.returncode = out, rc
+
+    def fake_run(cmd, **k):
+        if "view" in cmd:
+            return _Fake("owner/repo\n")
+        if cmd[-1] == ".default_branch":
+            return _Fake("main\n")
+        return _Fake('["CC labelling","Version validation"]')
+    monkeypatch.setattr(audit.subprocess, "run", fake_run)
+
+    fails, _ = audit.check_live_required_contexts(audit.Repo(repo))
+    assert len(fails) == 1 and "Version validation" in fails[0]
