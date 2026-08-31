@@ -2,8 +2,9 @@
 """Skill-conformance audit: verify the ha-integration skill was actually followed.
 
 Canonical workflows present, action pins current, antipatterns absent, quality_scale
-honest. The mechanical subset of Mode 4 — the judgement items still need an agent with
-the skill on disk. Exit 1 on any FAIL. Runs locally and in CI.
+honest. The mechanical subset of the audit — the judgement items in
+reference/audit.md still need an agent with the skill on disk. Exit 1 on any FAIL.
+Runs locally and in CI.
 
 Ported from skill_audit.sh: the shell version grew ten embedded Python blocks, none of
 which could be unit-tested, which is the same trap the skill warns about elsewhere.
@@ -21,8 +22,13 @@ import sys
 
 Result = tuple[list[str], list[str]]  # (failures, warnings)
 
+# Required in every repo built from this skill. All but release_drafter produce a context
+# templates/ruleset.json requires, and a repo missing one leaves the ruleset waiting forever
+# on a check that never reports; release_drafter is here because the release model depends on
+# it, not because it reports a check. The two integration-only workflows below produce
+# required contexts too — they are separated because a non-integration repo has no manifest.
 CANONICAL = ("pr-checks", "release_drafter", "lint_pr",
-             "python_validate", "quality_audit")
+             "python_validate", "quality_audit", "dependency_review")
 INTEGRATION_ONLY = ("hacs_validate", "hassfest_validate", "release")
 SHIPPED_SCRIPTS = {"manifest_gate.py", "commit_summary.py", "release_notes.py",
                    "check_release_notes.py", "skill_audit.py", "version_sync.py"}
@@ -137,9 +143,10 @@ def check_no_tracked_artefacts(repo: Repo) -> Result:
 def check_scripts_present(repo: Repo) -> Result:
     """The scripts workflows shell out to; a missing one fails at runtime, on every PR."""
     wanted = {
-        "scripts/manifest_gate.py": "pr-checks.yml's version-gate shells out to it",
-        "tests/test_manifest_gate.py": "the gate's logic must stay unit-tested",
-        "scripts/commit_summary.py": "pr-checks.yml's commit-summary shells out to it",
+        "scripts/manifest_gate.py": "pr-checks.yml's title-check shells out to it for the "
+                                    "implied next version",
+        "tests/test_manifest_gate.py": "that resolution must stay unit-tested",
+        "scripts/commit_summary.py": "pr-checks.yml's title-check and auto_draft_pr.yml both shell out to it",
         "scripts/release_notes.py": "release notes would be grouped by PR label, filing fixes under Features",
         "scripts/check_release_notes.py": "nothing would verify the release description renders",
         "scripts/version_sync.py": "nothing would compare the python version across the files that declare it",
@@ -347,14 +354,16 @@ def check_pr_checks_shape(repo: Repo) -> Result:
     fails, warns = [], []
     if "Remove superseded" not in t:
         fails.append("pr-checks.yml missing the removal-only superseded-label step")
-    if "dependabot[bot]" not in t:
-        warns.append("pr-checks.yml may not exempt dependabot[bot] from the version gate")
-    if "gh release list" not in t:
-        warns.append("pr-checks.yml may not compare against the last published release")
+    # The label decides the release category and the version bump, so it has to be the
+    # RIGHT label, not merely a label. Checking presence alone passed a `fix:`-titled PR
+    # carrying a `feat!:` commit, which released a breaking change as a patch.
+    if "--mode label" not in t:
+        fails.append("pr-checks.yml does not compare the PR's label against the one its "
+                     "commits entitle it to (scripts/commit_summary.py --mode label)")
     if "pull_request_target" not in t:
         fails.append("pr-checks.yml must use pull_request_target (fork PRs get a read-only "
                      "token otherwise)")
-    if t.count("needs: label") < 2:
+    if "needs: label" not in t:
         fails.append("pr-checks.yml: label-reading jobs must declare 'needs: label' (else "
                      "they race the autolabeler)")
     if "user.type != 'Bot'" not in t:
@@ -456,6 +465,34 @@ def check_pr_openers(repo: Repo) -> Result:
                          "it opens PRs that impersonate the token owner")
         if "--draft" not in opener:
             fails.append("auto_draft_pr.yml must open the PR as a draft")
+    return fails, []
+
+
+def check_platforms_have_modules(repo: Repo) -> Result:
+    """Every name in PLATFORMS must have a module beside it.
+
+    `async_forward_entry_setups` imports `<domain>/<platform>.py` for each name, so a name
+    with no module raises ModuleNotFoundError and the entry never reaches LOADED. Observed
+    on a live repo: `PLATFORMS = ["sensor"]` with no `sensor.py`, inert until someone wired
+    the forward, at which point setup died. Mechanical, so the skill states the build rule
+    and the gate catches the mismatch.
+    """
+    if not repo.cc:
+        return [], []
+    fails = []
+    for pkg in [repo.cc]:          # repo.cc IS the integration package
+        names: list[str] = []
+        for py in (pkg / "const.py", pkg / "__init__.py"):
+            if not py.is_file():
+                continue
+            m = re.search(r"PLATFORMS[^=]*=\s*\[(?P<body>[^\]]*)\]", py.read_text(errors="replace"))
+            if m:
+                names += re.findall(r"[\"\']([a-z_]+)[\"\']", m.group("body"))
+                names += [p.split(".")[-1].lower() for p in re.findall(r"Platform\.([A-Z_]+)", m.group("body"))]
+        for name in dict.fromkeys(names):
+            if not (pkg / f"{name}.py").is_file():
+                fails.append(f"{pkg.name}: PLATFORMS names {name!r} but {pkg.name}/{name}.py "
+                             "does not exist — the entry will fail to set up")
     return fails, []
 
 
@@ -635,7 +672,6 @@ def check_self_diff(repo: Repo) -> Result:
         rel = tf.relative_to(tmpl)
         if rel.name in sanctioned:
             continue
-        rf = repo.root / ".github" / rel.relative_to(".github") if str(rel).startswith(".github") else repo.root / rel
         rf = repo.root / rel
         if not rf.exists():
             continue
@@ -645,10 +681,37 @@ def check_self_diff(repo: Repo) -> Result:
         except Exception:
             continue
     if bad:
-        return ["this repo's .github/ diverges from its own templates/ (see Mode 4 sanctioned "
-                "adaptations): " + ", ".join(bad)], []
+        return ["this repo's .github/ diverges from its own templates/ (see the sanctioned "
+                "adaptations table in reference/github-actions.md): " + ", ".join(bad)], []
     return [], []
 
+
+
+def check_template_scripts_match(repo: Repo) -> Result:
+    """When this IS the skill repo, the scripts it ships must match the ones it runs.
+
+    `check_self_diff` compares workflows only, so `templates/scripts/` and `templates/tests/`
+    drifted silently: two fixes landed in the repo's own copy and never reached the copy every
+    scaffolded integration receives, while the docs described the fixed behaviour. Compare
+    byte-for-byte — these are the same file, not a file and its adaptation.
+    """
+    tmpl = _template_dir(repo)
+    if not tmpl:
+        return [], []
+    bad = []
+    for sub in ("scripts", "tests"):
+        if not (tmpl / sub).is_dir():
+            continue
+        for tf in sorted((tmpl / sub).rglob("*.py")):
+            rf = repo.root / tf.relative_to(tmpl)
+            if not rf.is_file():
+                continue          # not every shipped file is one this repo runs
+            if tf.read_bytes() != rf.read_bytes():
+                bad.append(str(tf.relative_to(repo.root)))
+    if bad:
+        return ["templates/ ships a different version of a script this repo also runs; the "
+                "shipped copy is what integrations get, so fix both: " + ", ".join(bad)], []
+    return [], []
 
 
 def check_template_pins(repo: Repo) -> Result:
@@ -685,10 +748,12 @@ def check_release_token(repo: Repo) -> Result:
         return [], ["cannot list secrets here — verify RELEASE_TOKEN exists, or draft PRs will not open"]
     if out.returncode != 0:
         return [], ["cannot list secrets here — verify RELEASE_TOKEN exists, or draft PRs will not open"]
-    if "RELEASE_TOKEN" not in out.stdout.split():
-        return ["auto_draft_pr.yml is present but the RELEASE_TOKEN secret is not set "
-                "(see SKILL.md, RELEASE_TOKEN)"], []
-    return [], []
+    names = set(out.stdout.split())
+    # Either sanctioned source: the PAT, or the GitHub App pair the App path mints from.
+    if "RELEASE_TOKEN" in names or {"APP_ID", "APP_PRIVATE_KEY"} <= names:
+        return [], []
+    return ["auto_draft_pr.yml is present but neither RELEASE_TOKEN nor the "
+            "APP_ID/APP_PRIVATE_KEY pair is set (see SKILL.md, RELEASE_TOKEN)"], []
 
 
 def check_required_status_checks(repo: Repo) -> Result:
@@ -720,6 +785,104 @@ def check_required_status_checks(repo: Repo) -> Result:
     if "non_fast_forward" not in rules:
         warns.append(f"force-pushes to {branch} are not blocked")
     return fails, warns
+
+
+def _job_names(wf_dir: pathlib.Path) -> dict[str, str]:
+    """Check-run name -> the workflow that defines it.
+
+    GitHub names a check-run for the job's `name`, falling back to the job id. A matrix
+    renames it again — `lint-and-type (3.14)` — which is why the templates ship a scalar
+    python-version.
+    """
+    import yaml as _yaml
+    out: dict[str, str] = {}
+    for wf in sorted(wf_dir.glob("*.y*ml")):
+        try:
+            doc = _yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        for jid, job in (doc.get("jobs") or {}).items():
+            out[str((job or {}).get("name") or jid)] = wf.name
+    return out
+
+
+def _required_contexts(ruleset: pathlib.Path) -> list[str]:
+    """The status-check contexts a ruleset JSON makes required."""
+    try:
+        doc = json.loads(ruleset.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [c["context"] for r in doc.get("rules") or []
+            if r.get("type") == "required_status_checks"
+            for c in (r.get("parameters") or {}).get("required_status_checks") or []
+            if c.get("context")]
+
+
+def check_required_contexts_have_producers(repo: Repo) -> Result:
+    """A required context no job produces blocks every PR, forever.
+
+    A ruleset requires a check-run BY NAME, and nothing connected that name to the jobs the
+    workflows actually define. Checking that workflow FILES exist cannot catch it: the
+    failure is a name on one side with no job on the other. `dependency_review` hit this
+    once; `Version validation` hit it again after its workflow was deleted while the ruleset
+    kept requiring the context — every other check green, the PR unmergeable forever.
+    """
+    fails: list[str] = []
+    pairs: list[tuple[str, pathlib.Path, pathlib.Path]] = []
+    if repo.exists("ruleset.json") and repo.workflows.is_dir():
+        pairs.append(("ruleset.json", repo.root / "ruleset.json", repo.workflows))
+    tmpl = _template_dir(repo)
+    if tmpl and (tmpl / "ruleset.json").is_file() and (tmpl / ".github/workflows").is_dir():
+        pairs.append((str((tmpl / "ruleset.json").relative_to(repo.root)),
+                      tmpl / "ruleset.json", tmpl / ".github/workflows"))
+    for label, rs, wf_dir in pairs:
+        produced = _job_names(wf_dir)
+        fails += [f"{label} requires the status check {c!r}, but no job in "
+                  f"{wf_dir.relative_to(repo.root)}/ is named that — it can never report and "
+                  f"every PR stays blocked"
+                  for c in _required_contexts(rs) if c not in produced]
+    return fails, []
+
+
+def check_live_required_contexts(repo: Repo) -> Result:
+    """The ruleset in force, not the one committed beside it.
+
+    A repo whose protection is configured in the GitHub UI has no ruleset.json to compare,
+    and that is exactly where the `Version validation` orphan survived a workflow deletion.
+    Unverifiable here means NOT CHECKED, never silence.
+    """
+    if not repo.workflows.is_dir():
+        return [], []
+    try:
+        slug = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq",
+                               ".nameWithOwner"], cwd=repo.root, capture_output=True,
+                              text=True, check=False).stdout.strip()
+    except OSError:
+        return [], ["gh is not available — live required contexts NOT CHECKED, not passed"]
+    if not slug:
+        return [], ["no GitHub remote resolved — live required contexts NOT CHECKED, not passed"]
+    branch = subprocess.run(["gh", "api", f"repos/{slug}", "--jq", ".default_branch"],
+                            cwd=repo.root, capture_output=True, text=True, check=False).stdout.strip()
+    if not branch:
+        return [], [f"could not read {slug} (token lacks permission?) — live required contexts "
+                    "NOT CHECKED, not passed"]
+    out = subprocess.run(
+        ["gh", "api", f"repos/{slug}/rules/branches/{branch}", "--jq",
+         '[.[] | select(.type == "required_status_checks") '
+         '| .parameters.required_status_checks[].context]'],
+        cwd=repo.root, capture_output=True, text=True, check=False)
+    if out.returncode != 0 or not out.stdout.strip():
+        return [], [f"could not read branch rules for {branch} (token lacks permission?) — "
+                    "live required contexts NOT CHECKED, not passed"]
+    try:
+        contexts = json.loads(out.stdout)
+    except ValueError:
+        return [], [f"unexpected branch-rules response for {branch} — live required contexts "
+                    "NOT CHECKED, not passed"]
+    produced = _job_names(repo.workflows)
+    return [f"{branch} requires the status check {c!r}, but no job in .github/workflows/ is "
+            f"named that — it can never report and every PR stays blocked"
+            for c in contexts if c not in produced], []
 
 
 def check_dependency_graph(repo: Repo) -> Result:
@@ -755,10 +918,13 @@ CHECKS = (
     check_classifier_not_inlined, check_claims_have_tests, check_action_pins,
     check_pr_checks_shape, check_no_run_interpolation, check_no_ignored_validations,
     check_sole_labeler,
-    check_pr_openers, check_antipatterns, check_quality_scale_and_manifest,
+    check_pr_openers, check_platforms_have_modules, check_antipatterns, check_quality_scale_and_manifest,
     check_autolabeler_title_only, check_drafter_categories, check_docstrings,
-    check_commit_hook, check_brand_assets, check_self_diff, check_template_pins,
-    check_release_token, check_required_status_checks, check_dependency_graph,
+    check_commit_hook, check_brand_assets, check_self_diff, check_template_scripts_match,
+    check_template_pins,
+    check_release_token, check_required_status_checks,
+    check_required_contexts_have_producers, check_live_required_contexts,
+    check_dependency_graph,
 )
 
 
