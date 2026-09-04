@@ -39,6 +39,31 @@ def test_missing_canonical_workflows_are_listed(repo) -> None:
     assert any(".gitignore" in f for f in fails)
 
 
+def test_a_panel_repo_must_carry_the_panel_workflow(repo) -> None:
+    """`frontend/` without `panel_bundle.yml` leaves the panel's TypeScript unchecked.
+
+    The workflow was never required, so the two real panel repos sat on its superseded
+    predecessor with nothing objecting.
+    """
+    (repo / "frontend").mkdir()
+    (repo / "frontend/package.json").write_text("{}")
+    fails, _ = audit.check_canonical_files(audit.Repo(repo))
+    assert any("panel_bundle.yml" in f and "frontend/" in f for f in fails)
+
+
+def test_a_repo_without_a_panel_is_not_asked_for_the_panel_workflow(repo) -> None:
+    """On a repo with no `frontend/` the workflow's own first run fails; never demand it."""
+    fails, _ = audit.check_canonical_files(audit.Repo(repo))
+    assert not any("panel_bundle.yml" in f for f in fails)
+
+
+def test_the_superseded_frontend_workflow_is_refused(repo) -> None:
+    """`frontend_build.yml` gated merges on a build artefact; `panel_bundle.yml` replaced it."""
+    (repo / ".github/workflows/frontend_build.yml").write_text("name: old\n")
+    fails, _ = audit.check_canonical_files(audit.Repo(repo))
+    assert any("frontend_build.yml" in f and "panel_bundle.yml" in f for f in fails)
+
+
 def test_bare_tag_pins_fail(repo) -> None:
     """A tag can be repointed at new code that runs with the workflow's token."""
     _wf(repo, "a.yml", "jobs:\n  x:\n    steps:\n      - uses: actions/checkout@v7\n")
@@ -189,6 +214,26 @@ def test_shipped_script_absent_from_this_repo_is_not_drift(tmp_path) -> None:
     (tmpl / "scripts").mkdir(parents=True)
     (tmpl / "scripts/only_shipped.py").write_text("VALUE = 1\n")
     assert audit.check_template_scripts_match(audit.Repo(tmp_path)) == ([], [])
+
+
+def test_a_shipped_workflow_this_repo_lacks_is_named_as_unexercised(tmp_path) -> None:
+    """A template with no counterpart here is run by nothing, and the audit must say so.
+
+    `panel_bundle.yml` was edited eight times over three weeks without one execution:
+    this repo carries no copy, so its CI never ran it, and the silent skip here meant
+    no run ever mentioned that. Its first run anywhere failed.
+    """
+    tmpl = tmp_path / "plugins/ha/skills/demo/templates"
+    (tmpl / ".github/workflows").mkdir(parents=True)
+    (tmpl / ".github/workflows/only_shipped.yml").write_text("name: x\n")
+    (tmpl / ".github/workflows/both.yml").write_text("name: y\n")
+    (tmp_path / ".github/workflows").mkdir(parents=True)
+    (tmp_path / ".github/workflows/both.yml").write_text("name: y\n")
+    fails, warns = audit.check_self_diff(audit.Repo(tmp_path))
+    assert fails == []
+    assert len(warns) == 1
+    assert "only_shipped.yml" in warns[0] and "both.yml" not in warns[0]
+    assert "runs it" in warns[0]
 
 
 def test_list_mode_names_every_check(capsys) -> None:
@@ -486,6 +531,48 @@ def test_a_placeholder_in_a_with_value_fails(repo) -> None:
     )
     fails, _ = audit.check_no_placeholders(audit.Repo(repo))
     assert len(fails) == 1 and "<domain>" in fails[0]
+
+
+def test_python_run_without_a_setup_step_fails(repo) -> None:
+    """A step that runs Python before any setup-python step runs on the runner's own.
+
+    Four shipped workflows did exactly this, and the runner's interpreter rejected the
+    scripts' syntax. Comparing declared versions cannot see a job that declares none.
+    """
+    _wf(
+        repo,
+        "a.yml",
+        "jobs:\n  x:\n    steps:\n      - uses: actions/checkout@abc # v1\n"
+        "      - name: Gate\n        run: python3 scripts/manifest_gate.py --suggest\n",
+    )
+    fails, _ = audit.check_python_steps_have_a_setup(audit.Repo(repo))
+    assert len(fails) == 1
+    assert "a.yml" in fails[0] and "'Gate'" in fails[0] and "setup-python" in fails[0]
+
+
+def test_python_run_after_a_setup_step_passes(repo) -> None:
+    """The ordinary shape: setup-python, then the script."""
+    _wf(
+        repo,
+        "a.yml",
+        "jobs:\n  x:\n    steps:\n      - uses: actions/checkout@abc # v1\n"
+        "      - uses: actions/setup-python@def # v7\n        with:\n"
+        "          python-version: '3.14'\n"
+        "      - run: |\n          python3 - <<'PY'\n          print(1)\n          PY\n",
+    )
+    assert audit.check_python_steps_have_a_setup(audit.Repo(repo)) == ([], [])
+
+
+def test_a_setup_step_in_another_job_does_not_count(repo) -> None:
+    """Jobs run on separate runners; a setup in one job leaves the other on the default."""
+    _wf(
+        repo,
+        "a.yml",
+        "jobs:\n  x:\n    steps:\n      - uses: actions/setup-python@def # v7\n"
+        "  y:\n    steps:\n      - run: python -m pytest\n",
+    )
+    fails, _ = audit.check_python_steps_have_a_setup(audit.Repo(repo))
+    assert len(fails) == 1 and "job 'y'" in fails[0]
 
 
 def _pr_checks(ref: str) -> str:
