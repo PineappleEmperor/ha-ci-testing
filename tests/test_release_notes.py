@@ -3,15 +3,15 @@
 Load the standalone script by path; it is not an importable package.
 """
 
-from __future__ import annotations
-
 import importlib.util
 import pathlib
 import sys
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
-_SPEC = importlib.util.spec_from_file_location("release_notes", _SCRIPTS / "release_notes.py")
+_SPEC = importlib.util.spec_from_file_location(
+    "release_notes", _SCRIPTS / "release_notes.py"
+)
 rn = importlib.util.module_from_spec(_SPEC)
 assert _SPEC.loader is not None
 _SPEC.loader.exec_module(rn)
@@ -24,16 +24,16 @@ def test_groups_by_commit_type_not_pr_label(monkeypatch) -> None:
     commit of a PR under that PR's single label, so a `fix:` in a `feat:`-titled
     PR lands under Features and a reader finds no Fixes section.
     """
-    log = "\n".join([
-        "aaa\x00feat: add polling",
-        "bbb\x00fix: close the session",
-        "ccc\x00chore: tidy",
-    ])
+    log = "aaa\x00feat: add polling\nbbb\x00fix: close the session\nccc\x00chore: tidy"
     monkeypatch.setattr(rn, "_git", lambda *a: log)
     monkeypatch.setattr(rn, "pr_for", lambda sha, head: "7")
     out = rn.build("v1..HEAD", repo_url="https://x/y", head="HEAD")
 
-    assert out.index("## 🚀 Features") < out.index("## 🔧 Fixes") < out.index("## 🧰 Maintenance")
+    assert (
+        out.index("## 🚀 Features")
+        < out.index("## 🔧 Fixes")
+        < out.index("## 🧰 Maintenance")
+    )
     fixes = out.split("## 🔧 Fixes")[1].split("##")[0]
     assert "close the session" in fixes
     assert "add polling" not in fixes
@@ -41,11 +41,11 @@ def test_groups_by_commit_type_not_pr_label(monkeypatch) -> None:
 
 def test_merge_commits_and_version_bumps_are_dropped(monkeypatch) -> None:
     """Neither is a changelog entry."""
-    log = "\n".join([
-        "aaa\x00Merge pull request #3 from o/b",
-        "bbb\x00chore: bump manifest version to v1.2.3",
-        "ccc\x00fix: a real change",
-    ])
+    log = (
+        "aaa\x00Merge pull request #3 from o/b\n"
+        "bbb\x00chore: bump manifest version to v1.2.3\n"
+        "ccc\x00fix: a real change"
+    )
     monkeypatch.setattr(rn, "_git", lambda *a: log)
     monkeypatch.setattr(rn, "pr_for", lambda sha, head: None)
     out = rn.build("v1..HEAD")
@@ -58,8 +58,13 @@ def test_compare_link_appended(monkeypatch) -> None:
     """Every surveyed HACS repo ends with a full-changelog compare link."""
     monkeypatch.setattr(rn, "_git", lambda *a: "aaa\x00feat: thing")
     monkeypatch.setattr(rn, "pr_for", lambda sha, head: None)
-    out = rn.build("v1..HEAD", repo_url="https://x/y", previous="v1.0.0", version="1.1.0")
-    assert "**Full Changelog**: [v1.0.0...v1.1.0](https://x/y/compare/v1.0.0...v1.1.0)" in out
+    out = rn.build(
+        "v1..HEAD", repo_url="https://x/y", previous="v1.0.0", version="1.1.0"
+    )
+    assert (
+        "**Full Changelog**: [v1.0.0...v1.1.0](https://x/y/compare/v1.0.0...v1.1.0)"
+        in out
+    )
 
 
 def test_no_changes_says_so(monkeypatch) -> None:
@@ -70,9 +75,10 @@ def test_no_changes_says_so(monkeypatch) -> None:
 
 def _crn():
     """The notes checker, loaded from scripts/ like the other single-file tools."""
-    import importlib.util as _il
-    spec = _il.spec_from_file_location("check_release_notes", _SCRIPTS / "check_release_notes.py")
-    mod = _il.module_from_spec(spec)
+    spec = importlib.util.spec_from_file_location(
+        "check_release_notes", _SCRIPTS / "check_release_notes.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -86,8 +92,12 @@ def test_empty_range_sentinel_is_flagged() -> None:
     so only a check for the sentinel itself catches it.
     """
     crn = _crn()
-    assert any("empty-range sentinel" in p for p in crn.check("_No user-facing changes._"))
-    assert not any("empty-range sentinel" in p for p in crn.check("## 🔧 Fixes\n\n- a real change"))
+    assert any(
+        "empty-range sentinel" in p for p in crn.check("_No user-facing changes._")
+    )
+    assert not any(
+        "empty-range sentinel" in p for p in crn.check("## 🔧 Fixes\n\n- a real change")
+    )
 
 
 def test_draft_placeholder_is_flagged() -> None:
@@ -107,19 +117,22 @@ def test_drafter_body_means_the_generator_never_ran() -> None:
     crn = _crn()
     drafter = "## Fixes\n\n- fix: close the session @dev (#12)\n"
     assert any("release-drafter" in p for p in crn.check(drafter))
-    assert not any("release-drafter" in p for p in crn.check("## 🔧 Fixes\n\n- close the session ([#12](u))\n"))
+    assert not any(
+        "release-drafter" in p
+        for p in crn.check("## 🔧 Fixes\n\n- close the session ([#12](u))\n")
+    )
 
 
-GH_NOTES = "\n".join([
-    "## What's Changed",
-    "* fix: close the session by @someone in https://x/y/pull/7",
-    "",
-    "## New Contributors",
-    "* @newbie made their first contribution in https://x/y/pull/7",
-    "* @dependabot[bot] made their first contribution in https://x/y/pull/8",
-    "",
-    "**Full Changelog**: https://x/y/compare/v1.0.0...v1.1.0",
-])
+GH_NOTES = (
+    "## What's Changed\n"
+    "* fix: close the session by @someone in https://x/y/pull/7\n"
+    "\n"
+    "## New Contributors\n"
+    "* @newbie made their first contribution in https://x/y/pull/7\n"
+    "* @dependabot[bot] made their first contribution in https://x/y/pull/8\n"
+    "\n"
+    "**Full Changelog**: https://x/y/compare/v1.0.0...v1.1.0"
+)
 
 
 def test_new_contributors_takes_only_that_section() -> None:
@@ -139,10 +152,10 @@ def test_new_contributors_drops_bots() -> None:
 
 def test_new_contributors_empty_when_only_bots() -> None:
     """Filtering can empty the section, and a bare heading is worse than none."""
-    notes = "\n".join([
-        "## New Contributors",
-        "* @dependabot[bot] made their first contribution in https://x/y/pull/8",
-    ])
+    notes = (
+        "## New Contributors\n"
+        "* @dependabot[bot] made their first contribution in https://x/y/pull/8"
+    )
     assert rn.new_contributors(notes) == ""
 
 
@@ -150,7 +163,12 @@ def test_new_contributors_spliced_before_the_compare_link(monkeypatch) -> None:
     """The block belongs in the body, above the compare link this file writes."""
     monkeypatch.setattr(rn, "_git", lambda *a: "aaa\x00feat: thing")
     monkeypatch.setattr(rn, "pr_for", lambda sha, head: None)
-    out = rn.build("v1..HEAD", repo_url="https://x/y", previous="v1.0.0", version="1.1.0",
-                   github_notes=GH_NOTES)
+    out = rn.build(
+        "v1..HEAD",
+        repo_url="https://x/y",
+        previous="v1.0.0",
+        version="1.1.0",
+        github_notes=GH_NOTES,
+    )
     assert out.index("## New Contributors") < out.index("**Full Changelog**")
     assert out.count("**Full Changelog**") == 1
