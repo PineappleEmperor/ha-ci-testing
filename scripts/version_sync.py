@@ -11,15 +11,15 @@ and CI stayed green while linting a version nobody runs.
 from it and is checked against the workflow's `python-version`.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import pathlib
 import re
 import sys
 
-PHCC = re.compile(r"^\s*pytest-homeassistant-custom-component\s*==\s*(?P<version>\S+)", re.M)
+PHCC = re.compile(
+    r"^\s*pytest-homeassistant-custom-component\s*==\s*(?P<version>\S+)", re.MULTILINE
+)
 RUFF_TARGET = re.compile(r'target-version\s*=\s*"py(?P<major>\d)(?P<minor>\d+)"')
 PY_VERSION = re.compile(r'python-version:\s*["\']?(?P<version>\d+\.\d+)')
 
@@ -32,14 +32,21 @@ def collect(root: pathlib.Path) -> dict[str, str | None]:
     """Every declared Python version, keyed by the file that declares it."""
     found: dict[str, str | None] = {}
 
-    workflow = _read(root / ".github/workflows/python_validate.yml")
-    m = PY_VERSION.search(workflow)
-    found["python_validate.yml"] = m.group("version") if m else None
+    # Every workflow that sets up Python, not just the one that runs pytest: the ones
+    # running scripts/ declare the version too, and one lagging a bump ran the scripts
+    # on an interpreter that rejected their syntax while this said the versions agreed.
+    found["python_validate.yml"] = None
+    workflows = root / ".github/workflows"
+    for wf in sorted(workflows.glob("*.y*ml")) if workflows.is_dir() else []:
+        m = PY_VERSION.search(_read(wf))
+        if m:
+            found[wf.name] = m.group("version")
 
     pyproject = _read(root / "pyproject.toml")
     m = RUFF_TARGET.search(pyproject)
     found["pyproject.toml ruff target-version"] = (
-        f"{m.group('major')}.{m.group('minor')}" if m else None)
+        f"{m.group('major')}.{m.group('minor')}" if m else None
+    )
 
     pyright = _read(root / "pyrightconfig.json")
     if pyright:
@@ -68,8 +75,10 @@ def problems(root: pathlib.Path) -> list[str]:
     # follows whatever HA published today.
     reqs = _read(root / "requirements.test.txt")
     if reqs and not PHCC.search(reqs):
-        out.append("requirements.test.txt does not pin pytest-homeassistant-custom-component "
-                   "(the suite would test against whichever HA release is current)")
+        out.append(
+            "requirements.test.txt does not pin pytest-homeassistant-custom-component "
+            "(the suite would test against whichever HA release is current)"
+        )
     return out
 
 
@@ -84,12 +93,17 @@ def thin(root: pathlib.Path) -> list[str]:
     missing = [k for k, v in found.items() if v is None]
     declared = {k: v for k, v in found.items() if v is not None}
     if len(declared) < 2:
-        return [f"only {len(declared)} python version declared; nothing to compare "
-                f"(absent: {', '.join(missing)})"]
+        return [
+            (
+                f"only {len(declared)} python version declared; nothing to compare "
+                f"(absent: {', '.join(missing)})"
+            )
+        ]
     return []
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Report disagreements and thin coverage; exit 1 on a disagreement."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".", help="repository root to inspect")
     args = ap.parse_args(argv)

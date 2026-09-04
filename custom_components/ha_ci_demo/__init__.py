@@ -4,8 +4,6 @@ This repository exists to prove the CI stack end to end: a real release, a real
 zip asset, real notes. It ships no device support and is not meant for users.
 """
 
-from __future__ import annotations
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 

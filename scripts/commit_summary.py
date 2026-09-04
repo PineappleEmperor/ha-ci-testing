@@ -9,13 +9,14 @@ inline heredoc cannot be, and a silently-wrong classifier corrupts release notes
 without ever failing a build.
 """
 
-from __future__ import annotations
-
 import argparse
+import pathlib
 import re
 import sys
 
-TYPE = re.compile(r"^(?P<type>[a-zA-Z]+)(\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s*(?P<desc>.*)$")
+TYPE = re.compile(
+    r"^(?P<type>[a-zA-Z]+)(\((?P<scope>[^)]*)\))?(?P<bang>!)?:\s*(?P<desc>.*)$"
+)
 
 # Types the release-drafter autolabeler folds into `chore` -> 🧰 Maintenance.
 MAINT = frozenset({"chore", "docs", "refactor", "perf", "test", "build", "ci", "style"})
@@ -32,7 +33,7 @@ BUMP = re.compile(
     r"^[a-z]+(\([^)]*\))?:\s*bump\s+(the\s+)?"
     r"((manifest|plugin|integration|skill|marketplace|ha)\s+)*"
     r"(version\b|to\s+v?\d+\.\d+)",
-    re.I,
+    re.IGNORECASE,
 )
 
 ORDER = ("breaking", "feat", "fix", "maint", "other")
@@ -157,14 +158,19 @@ def title_for(subjects: list[str]) -> str:
 
 
 def main() -> int:
+    """Print the title, label or winning group for the subjects on stdin or in a file."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mode", choices=("winning", "title", "label"), default="title")
-    ap.add_argument("--subjects", default="-", help="file of commit subjects, or - for stdin")
+    ap.add_argument(
+        "--subjects", default="-", help="file of commit subjects, or - for stdin"
+    )
     args = ap.parse_args()
 
-    src = sys.stdin if args.subjects == "-" else open(args.subjects, encoding="utf-8")
-    with src as fh:
-        subjects = fh.read().splitlines()
+    if args.subjects == "-":
+        subjects = sys.stdin.read().splitlines()
+    else:
+        with pathlib.Path(args.subjects).open(encoding="utf-8") as fh:
+            subjects = fh.read().splitlines()
 
     if args.mode == "title":
         print(title_for(subjects))
