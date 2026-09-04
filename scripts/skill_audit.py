@@ -195,6 +195,21 @@ def check_canonical_files(repo: Repo) -> Result:
             for w in INTEGRATION_ONLY
             if not repo.exists(f".github/workflows/{w}.yml")
         ]
+    # Panel repos only: on a repo with no frontend/ the workflow's own first run fails,
+    # and nothing required it on the repos that have one, so both real panel repos sat
+    # on the superseded frontend_build.yml with nothing objecting.
+    if repo.exists("frontend/package.json") and not repo.exists(
+        ".github/workflows/panel_bundle.yml"
+    ):
+        fails.append(
+            "missing .github/workflows/panel_bundle.yml (frontend/ exists, so the panel's "
+            "TypeScript is checked by nothing)"
+        )
+    if repo.exists(".github/workflows/frontend_build.yml"):
+        fails.append(
+            "frontend_build.yml is superseded by panel_bundle.yml (it gated merges on a "
+            "build artefact; release.yml rebuilds the bundle before packing the zip)"
+        )
     for f, why in (
         (".github/release-drafter.yml", ""),
         (".github/dependabot.yml", ""),
@@ -372,6 +387,46 @@ def check_no_placeholders(repo: Repo) -> Result:
                         f"{wf.relative_to(repo.root)} step '{step.get('name') or jn}' "
                         f"carries the unsubstituted placeholder {', '.join(found)} — "
                         f"bash reads `<` as a redirect, so the step cannot run"
+                    )
+    return fails, []
+
+
+# `python` or `python3` as a shell word: the start of the block, after whitespace, or after
+# a shell operator. `pipx`, `python-version` and paths like `bin/python3x` do not match.
+_PYTHON_CALL = re.compile(r"(?:^|[\s;&|(])python3?(?=\s|$)", re.MULTILINE)
+
+
+def check_python_steps_have_a_setup(repo: Repo) -> Result:
+    """A step that runs Python with no setup-python before it runs on the runner's own.
+
+    The shipped scripts are written to the Python floor the stack declares, and four
+    workflows ran them on ubuntu-latest's own interpreter, which rejected their syntax.
+    Comparing the declared versions cannot see this: a job that declares no version has
+    nothing to compare. Judged per job, because each job is its own runner, in this
+    repo's workflows and, when this is the skill repo, in the shipped ones.
+    """
+    dirs = [repo.workflows]
+    tmpl = _template_dir(repo)
+    if tmpl:
+        dirs.append(tmpl / ".github/workflows")
+    fails = []
+    for wf_dir in dirs:
+        if not wf_dir.is_dir():
+            continue
+        for wf in sorted(wf_dir.glob("*.y*ml")):
+            ready: set[str] = set()
+            for jn, step in repo.steps(wf):
+                if "actions/setup-python" in str(step.get("uses", "")):
+                    ready.add(jn)
+                    continue
+                if jn not in ready and _PYTHON_CALL.search(
+                    _live(str(step.get("run", "")))
+                ):
+                    fails.append(
+                        f"{wf.relative_to(repo.root)} job '{jn}' step "
+                        f"'{step.get('name') or jn}' runs Python on the runner's own "
+                        f"interpreter; put actions/setup-python before it so it runs on "
+                        f"the declared floor"
                     )
     return fails, []
 
@@ -960,24 +1015,38 @@ def check_self_diff(repo: Repo) -> Result:
         return [], []
     sanctioned = {"release_drafter.yml", "pr-checks.yml", "python_validate.yml"}
     bad = []
+    unexercised = []
     for tf in sorted((tmpl / ".github").rglob("*.yml")):
         rel = tf.relative_to(tmpl)
         if rel.name in sanctioned:
             continue
         rf = repo.root / rel
         if not rf.exists():
+            # A template this repo does not carry is compared with nothing and, since
+            # this repo's CI runs only the workflows it carries, run by nothing. Skipping
+            # it silently let panel_bundle.yml go three weeks and eight edits without one
+            # execution; its first run anywhere failed.
+            unexercised.append(str(rel))
             continue
         try:
             if yaml.safe_load(tf.read_text()) != yaml.safe_load(rf.read_text()):
                 bad.append(str(rel))
         except OSError, yaml.YAMLError:
             continue
+    warns = (
+        [
+            "shipped but carried by nothing here, so no CI run of this repo runs it; a "
+            "testbed sync is its only execution: " + ", ".join(unexercised)
+        ]
+        if unexercised
+        else []
+    )
     if bad:
         return [
             "this repo's .github/ diverges from its own templates/ (see the sanctioned "
             "adaptations table in reference/github-actions.md): " + ", ".join(bad)
-        ], []
-    return [], []
+        ], warns
+    return [], warns
 
 
 def check_template_scripts_match(repo: Repo) -> Result:
@@ -1415,6 +1484,7 @@ CHECKS = (
     check_previous_tag,
     check_zip_release_patches_manifest,
     check_no_placeholders,
+    check_python_steps_have_a_setup,
     check_label_events,
     check_release_drafter_wiring,
     check_classifier_not_inlined,
