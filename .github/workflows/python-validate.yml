@@ -10,4 +10,4 @@ permissions:
 
 jobs:
   validate:
-    uses: PineappleEmperor/ha-integration-ci/.github/workflows/python-validate.yml@ae1131548e7428e9e18dff179269ad29dbaa0bb8 # v1.0.0rc1
+    uses: PineappleEmperor/ha-integration-ci/.github/workflows/python-validate.yml@c8b557e9f094cd855c5aecebf2edee8934d23fc4 # v1.0.0
