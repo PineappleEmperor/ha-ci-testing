@@ -9,6 +9,9 @@ __pycache__/
 .venv/
 venv/
 
+# Repo-local scratch: clones, fixtures and throwaway copies
+.tmp/
+
 # Home Assistant test/dev artefacts
 .storage/
 home-assistant.log*
