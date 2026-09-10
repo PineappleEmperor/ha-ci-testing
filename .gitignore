@@ -13,6 +13,9 @@ venv/
 # few hundred megabytes here, and `git add -A` after it commits the lot.
 node_modules/
 
+# Repo-local scratch: clones, fixtures and throwaway copies
+.tmp/
+
 # Home Assistant test/dev artefacts
 .storage/
 home-assistant.log*
