@@ -1,9 +1,11 @@
 version: 2
 updates:
+  # daily, not weekly: this repository is where a release of the CI repositories is
+  # proven, and a weekly window makes proving that a bump arrives take a week.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     commit-message:
       prefix: chore
     groups:
@@ -17,4 +19,13 @@ updates:
       prefix: chore
     groups:
       pip:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      npm:
         patterns: ["*"]

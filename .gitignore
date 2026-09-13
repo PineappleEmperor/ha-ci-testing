@@ -1,6 +1,26 @@
+# Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
 .venv/
+venv/
+
+# Panel repos only, and harmless in the rest: the first `npm ci` in frontend/ writes a
+# few hundred megabytes here, and `git add -A` after it commits the lot.
+node_modules/
+
+# Repo-local scratch: clones, fixtures and throwaway copies
+.tmp/
+
+# Home Assistant test/dev artefacts
 .storage/
 home-assistant.log*
+home-assistant_v2.db*
+
+# Local, environment-specific notes that must never be committed — e.g. the
+# device map used by Mode 5 log triage, which contains a home's IP/device layout.
 device_map.md
