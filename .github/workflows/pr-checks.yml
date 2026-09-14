@@ -14,4 +14,4 @@ concurrency:
 
 jobs:
   pr:
-    uses: PineappleEmperor/release-flow/.github/workflows/pr-checks.yml@84836b2ab401159f0d41939ef70acff010d10dbf # v1.1.2
+    uses: PineappleEmperor/release-flow/.github/workflows/pr-checks.yml@7bfc333373cc6f5b396e0e786588e57dae033fdb # v1.1.3
