@@ -8,6 +8,8 @@ updates:
       interval: daily
     commit-message:
       prefix: chore
+    cooldown:
+      exclude: ["*"]
     groups:
       actions:
         patterns: ["*"]
@@ -17,6 +19,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+    cooldown:
+      exclude: ["*"]
     groups:
       pip:
         patterns: ["*"]
@@ -26,6 +30,8 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+    cooldown:
+      exclude: ["*"]
     groups:
       npm:
         patterns: ["*"]
