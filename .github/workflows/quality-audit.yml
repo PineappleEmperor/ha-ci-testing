@@ -10,4 +10,4 @@ permissions:
 
 jobs:
   audit:
-    uses: PineappleEmperor/ha-integration-ci/.github/workflows/quality-audit.yml@7d06f064d77f169910322997cbab910195661f73 # v1.0.1
+    uses: PineappleEmperor/ha-integration-ci/.github/workflows/quality-audit.yml@b49d8e6f72191063d76305ef6295269899b3053c # v1.0.3
