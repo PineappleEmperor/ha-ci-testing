@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# skill-audit: local-tool
-#
 # One-time repo setup for a scaffolded integration. Everything here is a GitHub-side
 # setting that no file in the repo can carry, and each one fails quietly until the
 # first CI run: HACS checks the description, topics and licence; the ruleset is what
