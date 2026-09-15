@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# One-time repo setup for a scaffolded integration. Everything here is a GitHub-side
-# setting that no file in the repo can carry, and each one fails quietly until the
-# first CI run: HACS checks the description, topics and licence; the ruleset is what
-# makes every workflow more than advisory; the hook is inert until core.hooksPath
-# points at it.
+# One-time repo setup for a scaffolded integration: the GitHub-side settings no file in
+# the repo can carry. What each one is for, and what fails without it, is the
+# ha-integration skill's reference/github-setup.md.
 #
 # Run from the repo root, once, after the first push:
 #   bash scripts/bootstrap_repo.sh "One-line description of the integration"
@@ -32,9 +30,9 @@ gh repo edit "$REPO" \
   --enable-issues
 echo "  topics and issues set"
 
-# dependency_review.yml FAILS rather than skipping when the graph is off, so a repo
-# that never enabled it carries a permanently red required check. Observed on a test
-# repo: every other workflow passed and Dependency review failed alone.
+# dependency-review.yml fails rather than skipping when the graph is off (the skill's
+# reference/github-setup.md), so a repo that never enabled it carries a permanently
+# red required check.
 if gh api "repos/$REPO/dependency-graph/sbom" >/dev/null 2>&1; then
   echo "  dependency graph already enabled"
 elif gh api -X PATCH "repos/$REPO" -F security_and_analysis[dependency_graph][status]=enabled \
@@ -68,7 +66,7 @@ if gh secret list --json name --jq '.[].name' | grep -qx RELEASE_TOKEN; then
   echo "  RELEASE_TOKEN already set"
 else
   echo
-  echo "RELEASE_TOKEN is required by auto_draft_pr.yml. Create a fine-grained PAT with"
+  echo "RELEASE_TOKEN is required by auto-draft-pr.yml. Create a fine-grained PAT with"
   echo "Contents: Read and write, Pull requests: Read and write, scoped to this repo."
   read -rsp "Paste it (or press Enter to skip): " TOKEN
   echo
