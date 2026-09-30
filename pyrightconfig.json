@@ -1,5 +1,0 @@
-{
-  "include": ["custom_components"],
-  "typeCheckingMode": "standard",
-  "pythonVersion": "3.14"
-}
