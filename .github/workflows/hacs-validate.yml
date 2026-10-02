@@ -1,5 +1,7 @@
 name: HACS Validation
 
+# Documented under *Step 2: Take each file from its source* in the ha-integration
+# skill's reference/github-actions.md.
 on:
   push:
     branches: [main]
@@ -7,11 +9,6 @@ on:
   schedule:
     - cron: "0 0 * * *"
 
-# hacs/action is pinned to @main deliberately — that is the ref HACS documents,
-# and a tag pin silently stops tracking their validation rules. The trade-off is
-# a mutable ref Dependabot cannot bump, so the blast radius is capped instead:
-# read-only permissions, and checkout drops the token rather than leaving it in
-# .git/config for the action to read.
 permissions:
   contents: read
 
