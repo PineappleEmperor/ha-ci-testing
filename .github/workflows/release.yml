@@ -9,4 +9,4 @@ permissions:
 
 jobs:
   release:
-    uses: PineappleEmperor/ha-integration-ci/.github/workflows/release.yml@a5e4eb1f491c99351c3a90da6603ad852df49e80 # v3.0.0 candidate
+    uses: PineappleEmperor/ha-integration-ci/.github/workflows/release.yml@9839ae2f8f15262a452d8cef38aac07b8b7098a8 # v3.0.0
