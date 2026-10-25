@@ -7,3 +7,5 @@ workflows are callers of `release-flow` and `ha-integration-ci`; what each does 
 those repositories' READMEs.
 
 A throwaway repo: releases here are test artefacts, not software anyone should install.
+
+<!-- label gate test: commits say breaking, title will say fix -->
