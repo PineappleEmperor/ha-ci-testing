@@ -1,7 +1,7 @@
 """Tests for the HA CI Demo diagnostics."""
 
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.ha_ci_demo.const import DOMAIN
 from custom_components.ha_ci_demo.diagnostics import async_get_config_entry_diagnostics
