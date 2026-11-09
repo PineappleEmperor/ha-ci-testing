@@ -10,12 +10,10 @@ from homeassistant.core import HomeAssistant
 type DemoConfigEntry = ConfigEntry[None]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: DemoConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: DemoConfigEntry) -> None:
     """Set up the integration from a config entry."""
     entry.runtime_data = None
-    return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: DemoConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: DemoConfigEntry) -> None:
     """Unload a config entry."""
-    return True

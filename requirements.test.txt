@@ -10,7 +10,7 @@
 # pypi.org/project/pytest-homeassistant. Always pin it with == to one release:
 # PyPI also carries an unrelated pytest-homeassistant 0.1.x from 2020. Never
 # install it beside pytest-homeassistant-custom-component.
-pytest-homeassistant==2026.11.0
+pytest-homeassistant==2026.11.1
 
 
 # Add integration-specific test deps below (e.g. a fake transport, respx,
