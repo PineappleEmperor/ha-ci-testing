@@ -20,6 +20,7 @@ async def test_user_flow_creates_the_entry(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "HA CI Demo"
     assert result["data"] == {}
+    assert result["result"].unique_id == DOMAIN
 
 
 async def test_a_second_entry_aborts(hass: HomeAssistant) -> None:
