@@ -240,6 +240,7 @@ convention = "google"
 property-decorators = ["propcache.api.cached_property"]
 
 [tool.pytest.ini_options]
+addopts = "-p no:respx"
 asyncio_debug = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -247,4 +248,5 @@ filterwarnings = [
   "error::sqlalchemy.exc.SAWarning",
   "error:usefixtures\\(\\) in .* without arguments has no effect:UserWarning",
 ]
+pythonpath = ["."]
 testpaths = ["tests"]
